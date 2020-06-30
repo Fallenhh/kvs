@@ -1,25 +1,25 @@
-use std::collections::HashMap;
+use std::path::PathBuf;
+use anyhow::Result;
 
 pub struct KvStore{
-    hashmap: HashMap<String, String>,
 }
 
 impl KvStore {
-    pub fn new() -> KvStore {
-        KvStore {
-            hashmap: HashMap::new(),
-        }
+
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+        Ok(KvStore {
+        })
     }
 
-    pub fn set(&mut self, k: String, v: String) {
-        self.hashmap.insert(k, v);
+    pub fn set(&mut self, k: String, v: String) ->Result<()>{
+        Ok(())
     }
 
-    pub fn remove(&mut self, k: String) {
-        self.hashmap.remove(&k);
+    pub fn remove(&mut self, k: String) -> Result<()>{
+        Ok(())
     }
 
-    pub fn get(&self, k:String) -> Option<String> {
-        self.hashmap.get(&k).cloned()
+    pub fn get(&self, k:String) -> Result<Option<String>> {
+        Ok(None)
     }
 }

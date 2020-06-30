@@ -26,7 +26,7 @@ fn main() {
         }
         ("rm", Some(_matches)) => {
             eprint!("unimplemented");
-            exit(101);
+            exit(1);
         }
         _ => panic!()
     }
