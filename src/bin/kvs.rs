@@ -25,9 +25,14 @@ fn main() -> Result<()>{
             let value = matches.value_of("VALUE").unwrap().to_owned();
             store.set(key, value)?;
         }
-        ("get", Some(_matches)) => {
-            eprint!("unimplemented");
-            exit(1);
+        ("get", Some(matches)) => {
+            let key = matches.value_of("KEY").unwrap().to_owned();
+            let value = store.get(key)?;
+            match value {
+              Some(v) => println!("{}", v),
+              None => println!("Key not found"),
+            }
+
         }
         ("rm", Some(matches)) => {
             let key = matches.value_of("KEY").unwrap().to_owned();

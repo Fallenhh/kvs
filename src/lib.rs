@@ -1,16 +1,17 @@
 use std::path::PathBuf;
 use std::fs::{File, OpenOptions};
 use std::io::{Write, BufRead, BufReader, Seek, SeekFrom};
+use std::collections::{BTreeMap};
+
 use serde::{Serialize, Deserialize};
-use serde_json;
-use std::process::exit;
-pub use anyhow::{Result, Error};
+use serde_json::Deserializer;
+pub use anyhow::{anyhow, Result};
+use thiserror::Error;
 
-#[derive(Debug, Clone)]
-struct KeyNotFoundError;
-
-pub struct KvStore{
-    log: File,
+#[derive(Error, Debug)]
+pub enum KvStoreError {
+    #[error("Key not found")]
+    KeyNotFound,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -27,88 +28,98 @@ enum Command{
     }
 }
 
+struct CommandOffset {
+    from: u64,
+    len: u64, 
+}
+
+pub struct KvStore{
+    path: PathBuf,
+    log: File,
+    index: BTreeMap<String, CommandOffset>,
+}
+
 impl KvStore {
 
     pub fn open<T: Into<PathBuf>>(path: T) -> Result<KvStore> {
         let mut pathbuf = path.into();
         pathbuf.push("data");
+        let mut index = BTreeMap::new();
+        let mut log = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(pathbuf.as_path())?;
+
+        KvStore::load(&mut log, &mut index)?;
         Ok(KvStore {
-            log: OpenOptions::new()
-                             .read(true)
-                             .append(true)
-                             .create(true)
-                             .open(pathbuf.as_path())?
+            path: pathbuf,
+            log,
+            index,
         })
     }
 
-    pub fn set(&mut self, k: String, v: String) ->Result<()>{
-        let payload = Command::Set{k ,v};
-        let serialized_payload = serde_json::to_string(&payload)?;
+    fn load(logfile: &mut File, index: &mut BTreeMap<String, CommandOffset>) -> Result<()> {
+        let mut start = logfile.seek(SeekFrom::Start(0))?;
+        let mut stream = Deserializer::from_reader(logfile).into_iter::<Command>();
+        while let Some(cmd) = stream.next() {
+            let end = stream.byte_offset() as u64;
+            match cmd? {
+                Command::Set{k, ..} => {
+                    index.insert(k, CommandOffset{from: start, len: end - start});
+                },
 
-        writeln!(self.log, "{}", &serialized_payload)?;
+                Command::Rm{k} => {
+                    index.remove(&k);
+                }
+            }
+            start = end;
+        }
+        Ok(())
+    }
+
+    pub fn set(&mut self, k: String, v: String) ->Result<()>{
+        let cmd = Command::Set{k ,v};
+        let serialized_payload = serde_json::to_string(&cmd)?;
+        let start = self.log.seek(SeekFrom::End(0))?;
+        write!(self.log, "{}", &serialized_payload)?;
+        let len  = self.log.seek(SeekFrom::End(0))?;
+        if let Command::Set{k, ..} = cmd {
+            self.index.insert(k, CommandOffset{from: start, len: len});
+        }
         Ok(())
     }
 
     pub fn remove(&mut self, key: String) -> Result<()>{
-        self.log.seek(SeekFrom::Start(0))?;
-        let br = BufReader::new(&self.log);
-        let mut rm_flag = false;
-        for line in br.lines() {
-            let line = line.unwrap();
-            let command: Command = serde_json::from_str(line.as_str())?;
-            match command {
-                Command::Set{k ,v} => {
-                    if k == key {
-                       rm_flag = true;
-                    }
-                }
-
-                Command::Rm{k} => {
-                    if k == key {
-                       rm_flag = false;
-                    }
-                }
+        if self.index.contains_key(&key) {
+            let cmd = Command::Rm {k: key};
+            let serialized_payload = serde_json::to_string(&cmd)?;
+            let start = self.log.seek(SeekFrom::End(0))?;
+            write!(self.log, "{}", &serialized_payload)?;
+            let len  = self.log.seek(SeekFrom::End(0))?;
+            if let Command::Rm{k} = cmd {
+                self.index.insert(k, CommandOffset{from: start, len: len});
             }
-        }
-
-        if rm_flag {
-            let payload = Command::Rm{k: key};
-            let serialized_payload = serde_json::to_string(&payload)?;
-            writeln!(self.log, "{}", &serialized_payload)?;
+            Ok(())
         }
         else {
-            println!("Key not found");
-            exit(1);
+            Err(anyhow!("Key not found"))
         }
-        Ok(())
     }
 
     pub fn get(&mut self, key:String) -> Result<Option<String>> {
-        self.log.seek(SeekFrom::Start(0))?;
-        let br = BufReader::new(&self.log);
-        let mut value = String::new();
-        for line in br.lines() {
-            let line = line.unwrap();
-            let command: Command = serde_json::from_str(line.as_str())?;
-            match command {
-                Command::Set{k ,v} => {
-                    if k == key {
-                        value = v.clone();
-                    }
-                }
-
-                Command::Rm{k} => {
-                    if k == key {
-                        value = String::new();
-                    }
-                }
+        if let Some(cmd_off) = self.index.get(&key) {
+            self.log.seek(SeekFrom::Start(cmd_off.from))?;
+            let mut stream = Deserializer::from_reader(&mut self.log).into_iter::<Command>();
+            let cmd = stream.next().expect("Internal Error");
+            if let Command::Set{v, ..} = cmd? {
+                Ok(Some(v))
+            } else {
+                Ok(None)
             }
         }
-        if value.is_empty(){
-            Ok(None)
-        }
         else {
-            Ok(Some(value))
+            Ok(None)
         }
     }
 }

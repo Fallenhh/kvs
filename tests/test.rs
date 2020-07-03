@@ -242,6 +242,7 @@ fn remove_non_existent_key() -> Result<()> {
     let mut store = KvStore::open(temp_dir.path())?;
     assert!(store.remove("key1".to_owned()).is_err());
     Ok(())
+    
 }
 
 #[test]
